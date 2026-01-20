@@ -1,0 +1,15 @@
+# 1. Rahasia (JANGAN DIHAPUS BARIS INI)
+.env
+
+# 2. Data Dump (Biar repo gak bengkak bergiga-giga)
+leaks_data/
+
+# 3. File Binary / Executable hasil build
+*.exe
+*.dll
+*.so
+bot_osint
+
+# 4. IDE Config (Optional)
+.vscode/
+.idea/

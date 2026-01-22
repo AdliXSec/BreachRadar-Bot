@@ -124,3 +124,28 @@ func handleExport(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch
 	docMsg.Caption = fmt.Sprintf("✅ Export Selesai: %d data", len(result.Hits.Hits))
 	bot.Send(docMsg)
 }
+
+func handleRedeem(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch.Client) {
+	chatID := msg.Chat.ID
+	input := strings.TrimSpace(strings.Replace(msg.Text, "/redeem", "", 1))
+	input = strings.TrimSpace(input) // Bersihkan spasi
+	
+	if input == "" {
+		bot.Send(tgbotapi.NewMessage(chatID, "⚠️ Gunakan format: `/redeem BR-XXXXX`"))
+		return
+	}
+
+	// 1. Cek Apakah Key Valid?
+	if getKeyStatus(es, input) {
+		// 2. Masukkan User ke Whitelist
+		userID := fmt.Sprintf("%d", msg.From.ID)
+		authorizeUser(es, userID, input)
+
+		// 3. Hapus Key (Agar tidak bisa dipakai orang lain)
+		deleteAccessKey(es, input)
+
+		bot.Send(tgbotapi.NewMessage(chatID, "✅ **AKSES DITERIMA!**\nSelamat, Anda sekarang bisa menggunakan bot ini sepuasnya."))
+	} else {
+		bot.Send(tgbotapi.NewMessage(chatID, "❌ **KEY INVALID**\nKode salah atau sudah digunakan."))
+	}
+}

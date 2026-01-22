@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/hex"
 	"strings"
 )
@@ -30,4 +32,11 @@ func maskPassword(val string) string {
 func generateFingerprint(data string) string {
 	hash := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(hash[:])
+}
+
+func generateInviteKey() string {
+	bytes := make([]byte, 4) // 4 byte entropy
+	rand.Read(bytes)
+	// Output contoh: BR-J5M2A
+	return "BR-" + strings.ToUpper(strings.TrimRight(base32.StdEncoding.EncodeToString(bytes), "=")[:5])
 }

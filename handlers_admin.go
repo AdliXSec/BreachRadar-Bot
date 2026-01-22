@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -57,6 +58,85 @@ func handleAuditLog(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client
 	bot.Send(reply)
 }
 
+// --- ACCESS CONTROL HANDLERS (ADMIN) ---
+
+func handleAccessControl(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client, command string) {
+	switch command {
+	case "/open":
+		// FIX: Gunakan getSystemConfig & saveSystemConfig
+		config := getSystemConfig(es)
+		config.Mode = "OPEN"
+		saveSystemConfig(es, config)
+		bot.Send(tgbotapi.NewMessage(chatID, "🔓 **SYSTEM OPEN**\nSekarang semua orang bisa mengakses bot."))
+	
+	case "/close":
+		// FIX: Gunakan getSystemConfig & saveSystemConfig
+		config := getSystemConfig(es)
+		config.Mode = "CLOSE"
+		saveSystemConfig(es, config)
+		bot.Send(tgbotapi.NewMessage(chatID, "🔒 **SYSTEM CLOSED**\nHanya Admin & User yang memiliki Key yang bisa akses."))
+
+	case "/genkey":
+		key := generateInviteKey()
+		saveAccessKey(es, key)
+		msg := fmt.Sprintf("🎟 **NEW ACCESS KEY**\nKey: `%s`\n\nBerikan key ini ke user. Gunakan `/redeem %s`", key, key)
+		reply := tgbotapi.NewMessage(chatID, msg)
+		reply.ParseMode = "Markdown"
+		bot.Send(reply)
+
+	case "/delkey":
+		resetAllAccess(es)
+		bot.Send(tgbotapi.NewMessage(chatID, "💥 **RESET SUCCESS**\nSemua Key dihapus.\nSemua User (kecuali Admin) telah dikeluarkan dari whitelist."))
+	}
+}
+
+func handleStats(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client) {
+	msgLoading, _ := bot.Send(tgbotapi.NewMessage(chatID, "📊 _Mengambil data statistik..._"))
+
+	stats := getClusterStats(es)
+	
+	// Ambil Config terbaru
+	config := getSystemConfig(es)
+	
+	statusIcon := "🔓"
+	if config.Mode == "CLOSE" { statusIcon = "🔒" }
+
+	// Info RAM
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	ramUsage := m.Alloc / 1024 / 1024 
+
+	topSearchStr := "-"
+	if len(stats.TopSearches) > 0 {
+		quoted := []string{}
+		for _, s := range stats.TopSearches {
+			quoted = append(quoted, fmt.Sprintf(`"%s"`, s))
+		}
+		topSearchStr = strings.Join(quoted, ", ")
+	}
+
+	msg := fmt.Sprintf(`📊 **SYSTEM STATUS**
+----------------
+🔐 System Mode: *%s %s*
+⚡ Rate Limit: *%d req/menit*
+💾 Total Data: *%d records*
+📁 Total Sources: *%d files*
+👥 Verified Users: *%d users*
+🔥 Top Search: %s
+🖥 RAM Usage: *%d MB*`, 
+	statusIcon, config.Mode,
+	config.RateLimit, 
+	stats.TotalRecords, 
+	stats.TotalSources, 
+	stats.TotalUsers, 
+	topSearchStr, 
+	ramUsage)
+
+	editMsg := tgbotapi.NewEditMessageText(chatID, msgLoading.MessageID, msg)
+	editMsg.ParseMode = "Markdown"
+	bot.Send(editMsg)
+}
+
 // --- LOGIC UPLOAD (Streaming) ---
 func handleURLUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch.Client) {
 	url := msg.Text
@@ -100,7 +180,7 @@ func handleFileUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, token string,
 	bot.Send(tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("✅ **UPLOAD SELESAI!**\nFile: `%s`\nTotal: %d", fileName, total)))
 }
 
-// --- HELPER INGESTION (Dipindah dari es_queries biar logic parsing ada disini) ---
+// --- HELPER INGESTION ---
 func ingestStreamCSV(r io.Reader, filename string, es *elasticsearch.Client) int {
 	reader := csv.NewReader(r)
 	headers, _ := reader.Read()

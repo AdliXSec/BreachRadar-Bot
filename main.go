@@ -215,9 +215,16 @@ func main() {
 			continue
 		}
 
-		if msg.Text != "" && !strings.HasPrefix(msg.Text, "/") {
-			logActivity(es, user, "SEARCH", msg.Text)
-			handleSearch(bot, msg, es)
+		if strings.HasPrefix(msg.Text, "/s") {
+			keyword := strings.TrimSpace(strings.Replace(msg.Text, "/s", "", 1))
+
+			if keyword == "" {
+				bot.Send(tgbotapi.NewMessage(chatID, "⚠️ Gunakan format: `/s <keyword>`\nContoh: `/s sudi` atau `/s email:sudi@gmail.com`"))
+			} else {
+				logActivity(es, user, "SEARCH", keyword) // Log keyword bersih
+				handleSearch(bot, msg, es, keyword)      // Panggil fungsi dengan keyword
+			}
+			continue
 		}
 	}
 }

@@ -11,13 +11,13 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func handleSearch(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch.Client) {
-	query := msg.Text
+func handleSearch(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch.Client, keyword string) {
+	// query := msg.Text
 	chatID := msg.Chat.ID
 	loading, _ := bot.Send(tgbotapi.NewMessage(chatID, "🔍 _Sedang mencari..._"))
 
 	// Gunakan fungsi dari es_queries.go
-	esQuery := buildSearchQuery(query, true)
+	esQuery := buildSearchQuery(keyword, true)
 	result, err := executeSearch(es, "breach_data", esQuery, 10) // Ambil 10
 
 	if err != nil {
@@ -29,7 +29,7 @@ func handleSearch(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch
 	var replyText string
 
 	if totalFound > 0 {
-		replyText = fmt.Sprintf("🚨 *DATA FOUND!*\nKeyword: `%s`\nResult: %d Data\n\n", escapeMarkdown(query), totalFound)
+		replyText = fmt.Sprintf("🚨 *DATA FOUND!*\nKeyword: `%s`\nResult: %d Data\n\n", escapeMarkdown(keyword), totalFound)
 		for i, hit := range result.Hits.Hits {
 			if i >= 5 {
 				break
@@ -53,7 +53,7 @@ func handleSearch(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch
 			replyText += fmt.Sprintf("_(...%d data lainnya. Gunakan /export untuk download)_", totalFound-5)
 		}
 	} else {
-		replyText = fmt.Sprintf("✅ *AMAN!*\nNihil: `%s`", escapeMarkdown(query))
+		replyText = fmt.Sprintf("✅ *AMAN!*\nNihil: `%s`", escapeMarkdown(keyword))
 	}
 
 	bot.Request(tgbotapi.NewDeleteMessage(chatID, loading.MessageID))
@@ -204,7 +204,7 @@ func handleHelp(bot *tgbotapi.BotAPI, chatID int64, isAdmin bool) {
 		msgText = fmt.Sprintf(`🤖 *PANDUAN PENGGUNAAN*
 
 🔍 *Cara Mencari Data*
-Cukup ketik kata kunci yang ingin dicari.
+Cukup ketik kata kunci yang ingin dicari di awali dengan tanda %s.
 • *Pencarian Dasar:* %s
 • *Spesifik:* %s
 • *Spesifik:* %s
@@ -216,7 +216,7 @@ Cukup ketik kata kunci yang ingin dicari.
 %s — Menampilkan pesan ini
 
 🔒 *Status Akses*
-Jika bot dalam mode *CLOSE*, Anda memerlukan *Key* dari Admin untuk menggunakan fitur pencarian.`,
+Jika bot dalam mode *CLOSE*, Anda memerlukan *Key* dari Admin untuk menggunakan fitur pencarian.`, code("/s <keyword>"),
 			code("rudi"), code("email:rudi@gmail.com"), code("ip:192.168.1.1"), code("*@yahoo.com"),
 			code("/export <keyword>"), code("/redeem <kode>"), code("/help"))
 	}

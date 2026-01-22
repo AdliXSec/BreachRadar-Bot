@@ -61,6 +61,20 @@ func main() {
 		chatID := msg.Chat.ID
 		user := msg.From
 		userIDStr := fmt.Sprintf("%d", user.ID)
+		isAdmin := (user.ID == ownerID)
+
+		if !isAdmin {
+			if isUserBanned(es, userIDStr) {
+				bot.Send(tgbotapi.NewMessage(chatID, "🚫 **AKSES DIBLOKIR**\nAkun Anda masuk dalam daftar hitam (Blacklist)."))
+				continue
+			}
+		}
+
+		if msg.Text == "/help" || msg.Text == "/start" {
+			// Kita oper status isAdmin ke fungsi
+			handleHelp(bot, chatID, isAdmin)
+			continue
+		}
 
 		if user.ID == ownerID {
 			// Handle /setlimit <angka>
@@ -109,6 +123,30 @@ func main() {
 				continue
 			case "/stats":
 				handleStats(bot, chatID, es)
+				continue
+			case "/getusers":
+				handleGetUsers(bot, chatID, es)
+				continue
+			}
+
+			if strings.HasPrefix(msg.Text, "/broadcast") {
+				handleBroadcast(bot, msg, es)
+				continue
+			}
+
+			if strings.HasPrefix(msg.Text, "/notif") {
+				handleNotification(bot, msg, es)
+				continue
+			}
+
+			if strings.HasPrefix(msg.Text, "/sendto") {
+				handleDirectMessage(bot, msg)
+				continue
+			}
+
+			if strings.HasPrefix(msg.Text, "/ban") || strings.HasPrefix(msg.Text, "/unban") {
+				cmd := strings.Split(msg.Text, " ")[0]
+				handleBanSystem(bot, msg, es, cmd)
 				continue
 			}
 

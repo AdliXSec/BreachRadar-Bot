@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"strconv"
+
 	"github.com/elastic/go-elasticsearch/v9"
 	"github.com/elastic/go-elasticsearch/v9/esapi"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"strconv"
 )
 
 type SystemStats struct {
@@ -19,6 +20,21 @@ type SystemStats struct {
 	TotalSources int
 	TotalUsers   int64
 	TopSearches  []string
+}
+
+type UserReport struct {
+	UserID    string
+	Username  string
+	FirstName string
+	LastName  string
+	Status    string
+}
+
+type BlacklistEntry struct {
+	UserID   string    `json:"user_id"`
+	BannedAt time.Time `json:"banned_at"`
+	Reason   string    `json:"reason"`
+	BannedBy string    `json:"banned_by"`
 }
 
 // --- QUERY PENCARIAN DATA ---
@@ -115,15 +131,15 @@ func indexDocument(es *elasticsearch.Client, doc map[string]interface{}, id stri
 // 		return "OPEN" // Default aman
 // 	}
 // 	defer res.Body.Close()
-	
+
 // 	var result map[string]interface{}
 // 	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
 // 		return "OPEN"
 // 	}
-	
+
 // 	src, ok := result["_source"].(map[string]interface{})
 // 	if !ok { return "OPEN" }
-	
+
 // 	return fmt.Sprintf("%v", src["mode"])
 // }
 
@@ -144,7 +160,7 @@ func getSystemConfig(es *elasticsearch.Client) SystemConfig {
 	// Default Value
 	config := SystemConfig{
 		Mode:      "OPEN",
-		RateLimit: 10, 
+		RateLimit: 10,
 	}
 
 	res, err := es.Get("system_config", "current_config")
@@ -152,20 +168,26 @@ func getSystemConfig(es *elasticsearch.Client) SystemConfig {
 		return config // Return default jika belum ada di DB
 	}
 	defer res.Body.Close()
-	
+
 	var result map[string]interface{}
 	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
 		return config
 	}
-	
+
 	src, ok := result["_source"].(map[string]interface{})
-	if !ok { return config }
-	
+	if !ok {
+		return config
+	}
+
 	// Parse Mode
-	if m, ok := src["mode"].(string); ok { config.Mode = m }
-	
+	if m, ok := src["mode"].(string); ok {
+		config.Mode = m
+	}
+
 	// Parse Limit (Handle float64 from JSON)
-	if l, ok := src["rate_limit"].(float64); ok { config.RateLimit = int(l) }
+	if l, ok := src["rate_limit"].(float64); ok {
+		config.RateLimit = int(l)
+	}
 
 	return config
 }
@@ -199,7 +221,9 @@ func saveAccessKey(es *elasticsearch.Client, key string) {
 // 4. Validasi & Pakai Key (Atomic Logic handled in handler usually, but here helper)
 func getKeyStatus(es *elasticsearch.Client, key string) bool {
 	res, err := es.Get("access_keys", key)
-	if err != nil || res.IsError() { return false }
+	if err != nil || res.IsError() {
+		return false
+	}
 	return true // Jika key ditemukan (nanti dihapus setelah dipakai)
 }
 
@@ -219,7 +243,9 @@ func authorizeUser(es *elasticsearch.Client, userID string, key string) {
 // 6. Cek Apakah User Whitelisted?
 func isUserAuthorized(es *elasticsearch.Client, userID string) bool {
 	res, err := es.Get("authorized_users", userID)
-	if err != nil || res.IsError() { return false }
+	if err != nil || res.IsError() {
+		return false
+	}
 	return true
 }
 
@@ -243,7 +269,7 @@ func getClusterStats(es *elasticsearch.Client) SystemStats {
 	if err == nil && !res.IsError() {
 		var countRes map[string]interface{}
 		json.NewDecoder(res.Body).Decode(&countRes)
-		
+
 		// Safe Assertion: Cek dulu apakah "count" ada dan berupa angka
 		if val, ok := countRes["count"].(float64); ok {
 			stats.TotalRecords = int64(val)
@@ -259,7 +285,7 @@ func getClusterStats(es *elasticsearch.Client) SystemStats {
 	if err == nil && !resUsers.IsError() {
 		var userRes map[string]interface{}
 		json.NewDecoder(resUsers.Body).Decode(&userRes)
-		
+
 		// Safe Assertion lagi
 		if val, ok := userRes["count"].(float64); ok {
 			stats.TotalUsers = int64(val)
@@ -284,18 +310,18 @@ func getClusterStats(es *elasticsearch.Client) SystemStats {
 
 	resAggs, err := es.Search(
 		es.Search.WithContext(context.Background()),
-		es.Search.WithIndex("breach_data", "user_logs"), 
+		es.Search.WithIndex("breach_data", "user_logs"),
 		es.Search.WithBody(strings.NewReader(queryBody)),
 	)
-	
+
 	if err == nil && !resAggs.IsError() { // Tambahan cek !IsError()
 		defer resAggs.Body.Close()
 		var aggRes map[string]interface{}
 		if err := json.NewDecoder(resAggs.Body).Decode(&aggRes); err == nil {
-			
+
 			// Parse Aggregations dengan pengecekan aman
 			if aggregations, ok := aggRes["aggregations"].(map[string]interface{}); ok {
-				
+
 				// A. Total Sources
 				if sources, ok := aggregations["unique_sources"].(map[string]interface{}); ok {
 					if val, ok := sources["value"].(float64); ok {
@@ -318,4 +344,233 @@ func getClusterStats(es *elasticsearch.Client) SystemStats {
 	}
 
 	return stats
+}
+
+func getAllVerifiedUserIDs(es *elasticsearch.Client) []int64 {
+	var userIDs []int64
+
+	// Query ambil semua data, hanya field 'user_id'
+	queryBody := `{
+		"_source": ["user_id"],
+		"query": { "match_all": {} },
+		"size": 10000 
+	}`
+
+	res, err := es.Search(
+		es.Search.WithContext(context.Background()),
+		es.Search.WithIndex("authorized_users"),
+		es.Search.WithBody(strings.NewReader(queryBody)),
+	)
+
+	if err != nil || res.IsError() {
+		return userIDs
+	}
+	defer res.Body.Close()
+
+	var result ESResponse
+	json.NewDecoder(res.Body).Decode(&result)
+
+	for _, hit := range result.Hits.Hits {
+		// Parse UserID (yang disimpan sebagai string) balikin ke int64 buat Telegram
+		uidStr := fmt.Sprintf("%v", hit.Source["user_id"])
+		if uid, err := strconv.ParseInt(uidStr, 10, 64); err == nil {
+			userIDs = append(userIDs, uid)
+		}
+	}
+	return userIDs
+}
+
+func getAllUniqueLogUserIDs(es *elasticsearch.Client) []int64 {
+	var userIDs []int64
+
+	// Kita gunakan Aggregation "Terms" untuk mengelompokkan user_id yang sama
+	// Size 10000 artinya kita ambil maksimal 10.000 user unik terakhir
+	queryBody := `{
+		"size": 0,
+		"aggs": {
+			"distinct_users": {
+				"terms": { "field": "user_id.keyword", "size": 10000 }
+			}
+		}
+	}`
+
+	res, err := es.Search(
+		es.Search.WithContext(context.Background()),
+		es.Search.WithIndex("user_logs"),
+		es.Search.WithBody(strings.NewReader(queryBody)),
+	)
+
+	if err != nil || res.IsError() {
+		return userIDs
+	}
+	defer res.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(res.Body).Decode(&result)
+
+	// Parsing Aggregation Result
+	if aggs, ok := result["aggregations"].(map[string]interface{}); ok {
+		if distinct, ok := aggs["distinct_users"].(map[string]interface{}); ok {
+			if buckets, ok := distinct["buckets"].([]interface{}); ok {
+				for _, b := range buckets {
+					item := b.(map[string]interface{})
+					// Key adalah User ID (string)
+					uidStr := fmt.Sprintf("%v", item["key"])
+
+					if uid, err := strconv.ParseInt(uidStr, 10, 64); err == nil {
+						userIDs = append(userIDs, uid)
+					}
+				}
+			}
+		}
+	}
+	return userIDs
+}
+
+func generateUserReport(es *elasticsearch.Client) []UserReport {
+	// Map untuk menyimpan user unik (Key: UserID) agar tidak duplikat
+	userMap := make(map[string]UserReport)
+
+	// 1. Ambil Data VERIFIED USERS
+	// (Kita query index authorized_users)
+	// Namun, index ini cuma simpan ID & Tanggal Redeem. Kita butuh Nama/Username.
+	// Trik: Kita ambil detail profilnya dari index 'user_logs' nanti.
+	// Jadi langkah pertama: Tandai dulu siapa yang verified.
+	verifiedIDs := make(map[string]bool)
+
+	queryVerified := `{"query": { "match_all": {} }, "size": 10000}`
+	resV, _ := es.Search(
+		es.Search.WithContext(context.Background()),
+		es.Search.WithIndex("authorized_users"),
+		es.Search.WithBody(strings.NewReader(queryVerified)),
+	)
+	if resV != nil && !resV.IsError() {
+		var res map[string]interface{}
+		json.NewDecoder(resV.Body).Decode(&res)
+		if hits, ok := res["hits"].(map[string]interface{}); ok {
+			if hitList, ok := hits["hits"].([]interface{}); ok {
+				for _, h := range hitList {
+					src := h.(map[string]interface{})["_source"].(map[string]interface{})
+					uid := fmt.Sprintf("%v", src["user_id"])
+					verifiedIDs[uid] = true
+				}
+			}
+		}
+		resV.Body.Close()
+	}
+
+	// 2. Ambil Data PROFIL dari USER_LOGS
+	// Kita gunakan Aggregation "Top Hits" untuk mengambil data profil TERBARU setiap user
+	queryLogs := `{
+		"size": 0,
+		"aggs": {
+			"users": {
+				"terms": { "field": "user_id.keyword", "size": 10000 },
+				"aggs": {
+					"latest_data": {
+						"top_hits": {
+							"sort": [ { "timestamp": { "order": "desc" } } ],
+							"_source": { "includes": [ "username", "first_name", "last_name" ] },
+							"size": 1
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	resL, _ := es.Search(
+		es.Search.WithContext(context.Background()),
+		es.Search.WithIndex("user_logs"),
+		es.Search.WithBody(strings.NewReader(queryLogs)),
+	)
+
+	if resL != nil && !resL.IsError() {
+		var res map[string]interface{}
+		json.NewDecoder(resL.Body).Decode(&res)
+
+		if aggs, ok := res["aggregations"].(map[string]interface{}); ok {
+			if users, ok := aggs["users"].(map[string]interface{}); ok {
+				if buckets, ok := users["buckets"].([]interface{}); ok {
+					for _, b := range buckets {
+						bucket := b.(map[string]interface{})
+						uid := fmt.Sprintf("%v", bucket["key"])
+
+						// Ambil detail nama dari latest_data
+						var uName, fName, lName string
+						if latest, ok := bucket["latest_data"].(map[string]interface{}); ok {
+							if hits, ok := latest["hits"].(map[string]interface{}); ok {
+								if list, ok := hits["hits"].([]interface{}); ok && len(list) > 0 {
+									src := list[0].(map[string]interface{})["_source"].(map[string]interface{})
+									uName = fmt.Sprintf("%v", src["username"])
+									fName = fmt.Sprintf("%v", src["first_name"])
+									lName = fmt.Sprintf("%v", src["last_name"])
+								}
+							}
+						}
+
+						// Tentukan Status
+						status := "GUEST"
+						if verifiedIDs[uid] {
+							status = "VERIFIED"
+						}
+
+						userMap[uid] = UserReport{
+							UserID:    uid,
+							Username:  uName,
+							FirstName: fName,
+							LastName:  lName,
+							Status:    status,
+						}
+					}
+				}
+			}
+		}
+		resL.Body.Close()
+	}
+
+	// Konversi Map ke Slice
+	var report []UserReport
+	for _, u := range userMap {
+		report = append(report, u)
+	}
+	return report
+}
+
+func isUserBanned(es *elasticsearch.Client, userID string) bool {
+	// Kita gunakan UserID sebagai Document ID agar pengecekan sangat cepat (O(1))
+	res, err := es.Get("user_blacklist", userID)
+
+	// Jika error atau 404 Not Found, berarti TIDAK di-ban
+	if err != nil || res.IsError() {
+		return false
+	}
+	return true
+}
+
+func banUser(es *elasticsearch.Client, userID string, reason string) {
+	entry := BlacklistEntry{
+		UserID:   userID,
+		BannedAt: time.Now(),
+		Reason:   reason,
+		BannedBy: "ADMIN",
+	}
+	body, _ := json.Marshal(entry)
+
+	req := esapi.IndexRequest{
+		Index:      "user_blacklist",
+		DocumentID: userID, // ID Dokumen = ID User
+		Body:       bytes.NewReader(body),
+		Refresh:    "true",
+	}
+	req.Do(context.Background(), es)
+}
+
+func unbanUser(es *elasticsearch.Client, userID string) {
+	req := esapi.DeleteRequest{
+		Index:      "user_blacklist",
+		DocumentID: userID,
+		Refresh:    "true",
+	}
+	req.Do(context.Background(), es)
 }

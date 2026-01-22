@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,13 +35,16 @@ func handleAuditLog(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client
 
 	// Formatting Output
 	latestLog := result.Hits.Hits[0].Source
-	
+
 	// Handle User ID type safety
 	var idUser string
 	switch v := latestLog["user_id"].(type) {
-	case string: idUser = v
-	case float64: idUser = fmt.Sprintf("%.0f", v)
-	default: idUser = fmt.Sprintf("%v", v)
+	case string:
+		idUser = v
+	case float64:
+		idUser = fmt.Sprintf("%.0f", v)
+	default:
+		idUser = fmt.Sprintf("%v", v)
 	}
 
 	msg := fmt.Sprintf("🆔 **USER PROFILE**\nID: `%s`\nUsername: `@%v`\n\n📜 **LOG:**\n", idUser, latestLog["username"])
@@ -49,7 +54,7 @@ func handleAuditLog(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client
 		tStr := fmt.Sprintf("%v", src["timestamp"])
 		parsedTime, _ := time.Parse(time.RFC3339, tStr)
 		humanTime := parsedTime.Format("02 Jan 15:04")
-		
+
 		msg += fmt.Sprintf("`%s` | *%v*\n`%v`\n\n", humanTime, src["action_type"], src["query_content"])
 	}
 
@@ -68,7 +73,7 @@ func handleAccessControl(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.C
 		config.Mode = "OPEN"
 		saveSystemConfig(es, config)
 		bot.Send(tgbotapi.NewMessage(chatID, "🔓 **SYSTEM OPEN**\nSekarang semua orang bisa mengakses bot."))
-	
+
 	case "/close":
 		// FIX: Gunakan getSystemConfig & saveSystemConfig
 		config := getSystemConfig(es)
@@ -94,17 +99,19 @@ func handleStats(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client) {
 	msgLoading, _ := bot.Send(tgbotapi.NewMessage(chatID, "📊 _Mengambil data statistik..._"))
 
 	stats := getClusterStats(es)
-	
+
 	// Ambil Config terbaru
 	config := getSystemConfig(es)
-	
+
 	statusIcon := "🔓"
-	if config.Mode == "CLOSE" { statusIcon = "🔒" }
+	if config.Mode == "CLOSE" {
+		statusIcon = "🔒"
+	}
 
 	// Info RAM
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	ramUsage := m.Alloc / 1024 / 1024 
+	ramUsage := m.Alloc / 1024 / 1024
 
 	topSearchStr := "-"
 	if len(stats.TopSearches) > 0 {
@@ -123,14 +130,14 @@ func handleStats(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client) {
 📁 Total Sources: *%d files*
 👥 Verified Users: *%d users*
 🔥 Top Search: %s
-🖥 RAM Usage: *%d MB*`, 
-	statusIcon, config.Mode,
-	config.RateLimit, 
-	stats.TotalRecords, 
-	stats.TotalSources, 
-	stats.TotalUsers, 
-	topSearchStr, 
-	ramUsage)
+🖥 RAM Usage: *%d MB*`,
+		statusIcon, config.Mode,
+		config.RateLimit,
+		stats.TotalRecords,
+		stats.TotalSources,
+		stats.TotalUsers,
+		topSearchStr,
+		ramUsage)
 
 	editMsg := tgbotapi.NewEditMessageText(chatID, msgLoading.MessageID, msg)
 	editMsg.ParseMode = "Markdown"
@@ -142,9 +149,9 @@ func handleURLUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsea
 	url := msg.Text
 	parts := strings.Split(url, "/")
 	fileName := "url_" + parts[len(parts)-1]
-	
+
 	bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "🌐 _Downloading stream..._"))
-	
+
 	resp, err := http.Get(url)
 	if err != nil {
 		bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "❌ Gagal download URL."))
@@ -164,10 +171,14 @@ func handleURLUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsea
 func handleFileUpload(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, token string, es *elasticsearch.Client) {
 	bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "📥 _Menerima file..._"))
 	fileURL, err := bot.GetFileDirectURL(msg.Document.FileID)
-	if err != nil { return }
-	
+	if err != nil {
+		return
+	}
+
 	resp, err := http.Get(fileURL) // Download dari server telegram
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	defer resp.Body.Close()
 
 	fileName := msg.Document.FileName
@@ -187,8 +198,12 @@ func ingestStreamCSV(r io.Reader, filename string, es *elasticsearch.Client) int
 	count := 0
 	for {
 		record, err := reader.Read()
-		if err == io.EOF { break }
-		if err != nil { continue }
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			continue
+		}
 		doc := make(map[string]interface{})
 		doc["leak_source"] = filename
 		var txtBuf []string
@@ -208,14 +223,244 @@ func ingestStreamCSV(r io.Reader, filename string, es *elasticsearch.Client) int
 
 func ingestStreamText(r io.Reader, filename string, es *elasticsearch.Client) int {
 	scanner := bufio.NewScanner(r)
-	buf := make([]byte, 0, 64*1024); scanner.Buffer(buf, 5*1024*1024)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 5*1024*1024)
 	count := 0
 	for scanner.Scan() {
 		line := scanner.Text()
-		if len(line) < 5 { continue }
+		if len(line) < 5 {
+			continue
+		}
 		doc := map[string]interface{}{"leak_source": filename, "raw_content": line, "full_text": line}
 		indexDocument(es, doc, generateFingerprint(line+filename))
 		count++
 	}
 	return count
+}
+
+func handleBroadcast(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch.Client) {
+	chatID := msg.Chat.ID
+
+	// 1. Ambil isi pesan setelah "/broadcast "
+	text := strings.TrimSpace(strings.Replace(msg.Text, "/broadcast", "", 1))
+	if text == "" {
+		bot.Send(tgbotapi.NewMessage(chatID, "⚠️ Gunakan: `/broadcast Pesan Pengumuman...`"))
+		return
+	}
+
+	bot.Send(tgbotapi.NewMessage(chatID, "📢 _Memulai broadcast..._"))
+
+	// 2. Ambil Daftar Penerima
+	targets := getAllVerifiedUserIDs(es)
+	if len(targets) == 0 {
+		bot.Send(tgbotapi.NewMessage(chatID, "❌ Tidak ada Verified User ditemukan."))
+		return
+	}
+
+	// 3. Looping Kirim Pesan
+	success := 0
+	failed := 0
+
+	for _, targetID := range targets {
+		// Format Pesan agar terlihat resmi
+		broadcastMsg := fmt.Sprintf("📢 **PENGUMUMAN ADMIN**\n\n%s", text)
+
+		msgToSend := tgbotapi.NewMessage(targetID, broadcastMsg)
+		msgToSend.ParseMode = "Markdown"
+
+		_, err := bot.Send(msgToSend)
+		if err == nil {
+			success++
+		} else {
+			failed++ // Biasanya karena user nge-block bot
+		}
+
+		// Jeda 50ms per pesan agar aman dari limit Telegram (30 msg/sec)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// 4. Laporan Selesai
+	report := fmt.Sprintf("✅ **BROADCAST SELESAI**\n\n📨 Terkirim: %d\n🚫 Gagal: %d\n👥 Total Target: %d", success, failed, len(targets))
+	bot.Send(tgbotapi.NewMessage(chatID, report))
+}
+
+func handleNotification(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch.Client) {
+	chatID := msg.Chat.ID
+
+	// 1. Ambil isi pesan
+	text := strings.TrimSpace(strings.Replace(msg.Text, "/notif", "", 1))
+	if text == "" {
+		bot.Send(tgbotapi.NewMessage(chatID, "⚠️ Gunakan: `/notif Pesan untuk semua user...`"))
+		return
+	}
+
+	bot.Send(tgbotapi.NewMessage(chatID, "🔔 _Mengumpulkan data semua user..._"))
+
+	// 2. Ambil User Unik dari Log
+	targets := getAllUniqueLogUserIDs(es)
+	if len(targets) == 0 {
+		bot.Send(tgbotapi.NewMessage(chatID, "❌ Belum ada history user di log."))
+		return
+	}
+
+	// 3. Looping Kirim
+	success := 0
+	failed := 0
+
+	for _, targetID := range targets {
+		// Header beda: INFO UMUM
+		notifMsg := fmt.Sprintf("🔔 **INFO DARI BOT**\n\n%s", text)
+
+		msgToSend := tgbotapi.NewMessage(targetID, notifMsg)
+		msgToSend.ParseMode = "Markdown"
+
+		_, err := bot.Send(msgToSend)
+		if err == nil {
+			success++
+		} else {
+			failed++ // User mungkin sudah blokir bot
+		}
+
+		time.Sleep(50 * time.Millisecond) // Anti-Flood
+	}
+
+	// 4. Laporan
+	report := fmt.Sprintf("✅ **NOTIFIKASI SELESAI**\n\n📨 Terkirim: %d\n🚫 Gagal: %d\n👥 Total Target (Unik): %d", success, failed, len(targets))
+	bot.Send(tgbotapi.NewMessage(chatID, report))
+}
+
+func handleGetUsers(bot *tgbotapi.BotAPI, chatID int64, es *elasticsearch.Client) {
+	bot.Send(tgbotapi.NewMessage(chatID, "👥 _Sedang merekap data pengguna..._"))
+
+	users := generateUserReport(es)
+	if len(users) == 0 {
+		bot.Send(tgbotapi.NewMessage(chatID, "❌ Belum ada data pengguna."))
+		return
+	}
+
+	// Buat CSV di Memori
+	b := &bytes.Buffer{}
+	w := csv.NewWriter(b)
+
+	// Header
+	w.Write([]string{"USER ID", "USERNAME", "FIRST NAME", "LAST NAME", "STATUS"})
+
+	// Isi Data
+	countVerified := 0
+	for _, u := range users {
+		w.Write([]string{
+			u.UserID,
+			"@" + u.Username,
+			u.FirstName,
+			u.LastName,
+			u.Status,
+		})
+		if u.Status == "VERIFIED" {
+			countVerified++
+		}
+	}
+	w.Flush()
+
+	// Kirim File
+	fileName := fmt.Sprintf("users_report_%s.csv", time.Now().Format("20060102_150405"))
+	fileBytes := tgbotapi.FileBytes{Name: fileName, Bytes: b.Bytes()}
+
+	docMsg := tgbotapi.NewDocument(chatID, fileBytes)
+	docMsg.Caption = fmt.Sprintf("✅ **REKAP PENGGUNA SELESAI**\n\n👥 Total User Unik: %d\n✅ Verified: %d\n👤 Guest: %d",
+		len(users), countVerified, len(users)-countVerified)
+	docMsg.ParseMode = "Markdown"
+
+	bot.Send(docMsg)
+}
+
+func handleDirectMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message) {
+	chatID := msg.Chat.ID
+
+	// 1. Parsing Input
+	// Format: /sendto <ID> <Pesan>
+	// Kita split menjadi 3 bagian: Command, ID, Pesan
+	parts := strings.SplitN(msg.Text, " ", 3)
+
+	if len(parts) < 3 {
+		bot.Send(tgbotapi.NewMessage(chatID, "⚠️ Format salah.\nGunakan: `/sendto <UserID> <Pesan Anda>`\nContoh: `/sendto 12345678 Selamat Anda menang!`"))
+		return
+	}
+
+	targetIDStr := strings.TrimSpace(parts[1])
+	content := parts[2]
+
+	// 2. Validasi ID (Harus Angka)
+	targetID, err := strconv.ParseInt(targetIDStr, 10, 64)
+	if err != nil {
+		bot.Send(tgbotapi.NewMessage(chatID, "❌ ID User harus berupa angka."))
+		return
+	}
+
+	// 3. Kirim Pesan ke Target
+	// Kita tambahkan header agar user tahu ini pesan manual dari Admin
+	finalMsg := fmt.Sprintf("📩 **PESAN DARI ADMIN**\n\n%s", content)
+
+	msgToSend := tgbotapi.NewMessage(targetID, finalMsg)
+	msgToSend.ParseMode = "Markdown"
+
+	_, errSend := bot.Send(msgToSend)
+
+	// 4. Laporan ke Admin
+	if errSend != nil {
+		// Error biasanya terjadi jika User memblokir bot atau ID salah
+		errMsg := fmt.Sprintf("❌ **GAGAL KIRIM**\nKe ID: `%d`\nError: %v", targetID, errSend)
+		bot.Send(tgbotapi.NewMessage(chatID, errMsg))
+	} else {
+		successMsg := fmt.Sprintf("✅ **TERKIRIM**\nKe ID: `%d`\nIsi: _%s_", targetID, content)
+		msgRep := tgbotapi.NewMessage(chatID, successMsg)
+		msgRep.ParseMode = "Markdown"
+		bot.Send(msgRep)
+	}
+}
+
+func handleBanSystem(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch.Client, cmd string) {
+	chatID := msg.Chat.ID
+	args := strings.TrimSpace(strings.Replace(msg.Text, cmd, "", 1))
+
+	if args == "" {
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("⚠️ Gunakan format:\n`%s <UserID> [Alasan]`", cmd)))
+		return
+	}
+
+	// Parsing ID dan Alasan
+	parts := strings.SplitN(args, " ", 2)
+	targetID := parts[0]
+	reason := "Pelanggaran Rules" // Default reason
+	if len(parts) > 1 {
+		reason = parts[1]
+	}
+
+	// Validasi ID Angka
+	if _, err := strconv.ParseInt(targetID, 10, 64); err != nil {
+		bot.Send(tgbotapi.NewMessage(chatID, "❌ User ID harus berupa angka."))
+		return
+	}
+
+	if cmd == "/ban" {
+		banUser(es, targetID, reason)
+
+		// Info ke Admin
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("⛔ **USER BANNED**\nID: `%s`\nReason: _%s_", targetID, reason)))
+
+		// Opsional: Kirim 'Surat Cinta' ke User yang di-ban
+		if uid, err := strconv.ParseInt(targetID, 10, 64); err == nil {
+			msgBan := tgbotapi.NewMessage(uid, fmt.Sprintf("🚫 **AKUN ANDA DIBEKUKAN**\n\nAdmin telah memblokir akses Anda ke bot ini secara permanen.\nAlasan: _%s_", reason))
+			msgBan.ParseMode = "Markdown"
+			bot.Send(msgBan)
+		}
+
+	} else if cmd == "/unban" {
+		unbanUser(es, targetID)
+		bot.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf("✅ **USER UNBANNED**\nID: `%s` telah dipulihkan.", targetID)))
+
+		// Info ke User
+		if uid, err := strconv.ParseInt(targetID, 10, 64); err == nil {
+			bot.Send(tgbotapi.NewMessage(uid, "✅ **AKSES DIPULIHKAN**\nAnda dapat menggunakan bot kembali."))
+		}
+	}
 }

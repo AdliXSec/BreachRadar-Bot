@@ -31,12 +31,18 @@ func handleSearch(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch
 	if totalFound > 0 {
 		replyText = fmt.Sprintf("🚨 *DATA FOUND!*\nKeyword: `%s`\nResult: %d Data\n\n", escapeMarkdown(query), totalFound)
 		for i, hit := range result.Hits.Hits {
-			if i >= 5 { break } // Limit tampilan chat
+			if i >= 5 {
+				break
+			} // Limit tampilan chat
 			replyText += "📂 *RECORD:*\n"
 			for k, v := range hit.Source {
-				if k == "full_text" || k == "raw_content" || k == "upload_date" || k == "leak_source" { continue }
+				if k == "full_text" || k == "raw_content" || k == "upload_date" || k == "leak_source" {
+					continue
+				}
 				valStr := fmt.Sprintf("%v", v)
-				if isSensitive(k) { valStr = maskPassword(valStr) }
+				if isSensitive(k) {
+					valStr = maskPassword(valStr)
+				}
 				replyText += fmt.Sprintf("▪️ `%s`: `%s`\n", escapeMarkdown(strings.ToUpper(k)), escapeMarkdown(valStr))
 			}
 			sourceName := fmt.Sprintf("%v", hit.Source["leak_source"])
@@ -76,8 +82,8 @@ func handleExport(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch
 	for _, hit := range result.Hits.Hits {
 		for k := range hit.Source {
 			// Kita skip field internal yang bikin CSV berantakan/berat
-			if k == "full_text" || k == "raw_content" { 
-				continue 
+			if k == "full_text" || k == "raw_content" {
+				continue
 			}
 			headerMap[k] = true
 		}
@@ -129,7 +135,7 @@ func handleRedeem(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch
 	chatID := msg.Chat.ID
 	input := strings.TrimSpace(strings.Replace(msg.Text, "/redeem", "", 1))
 	input = strings.TrimSpace(input) // Bersihkan spasi
-	
+
 	if input == "" {
 		bot.Send(tgbotapi.NewMessage(chatID, "⚠️ Gunakan format: `/redeem BR-XXXXX`"))
 		return
@@ -148,4 +154,77 @@ func handleRedeem(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, es *elasticsearch
 	} else {
 		bot.Send(tgbotapi.NewMessage(chatID, "❌ **KEY INVALID**\nKode salah atau sudah digunakan."))
 	}
+}
+
+func handleHelp(bot *tgbotapi.BotAPI, chatID int64, isAdmin bool) {
+	var msgText string
+
+	// Helper untuk membuat backtick (`) agar code block valid
+	code := func(s string) string {
+		return "`" + s + "`"
+	}
+
+	if isAdmin {
+		// === TAMPILAN KHUSUS ADMIN ===
+		// Gunakan *text* untuk Bold (Bukan **text**)
+		msgText = fmt.Sprintf(`🛡️ *ADMIN CONTROL PANEL*
+
+⚙️ *System Control*
+%s — Buka bot untuk publik
+%s — Kunci bot (Mode Privat)
+%s — Set rate limit (cth: 300)
+%s — Cek status server & data
+
+🔑 *Access Management*
+%s — Buat kode invite baru
+%s — Hapus semua key & whitelist
+%s — Download data user (CSV)
+%s — Cek log aktivitas user
+%s — Ban user
+%s — Unban user
+
+📢 *Communication*
+%s — Kirim ke Verified Users
+%s — Kirim ke Semua Users
+%s — Kirim pesan personal
+
+📥 *Data Management*
+• *Upload File:* Kirim file CSV/TXT langsung
+• *Upload URL:* Kirim Link Direct Download`,
+			code("/open"), code("/close"), code("/setlimit <n>"), code("/stats"),
+			code("/genkey"), code("/delkey"), code("/getusers"), code("/audit <user>"),
+			code("/ban <user>"), code("/unban <user>"),
+			code("/broadcast <msg>"), code("/notif <msg>"), code("/sendto <id> <msg>"))
+
+	} else {
+		// === TAMPILAN UNTUK USER BIASA ===
+		// Perbaikan: Hapus ** ganda, ganti jadi * tunggal.
+		// Gunakan fmt.Sprintf agar backtick tercetak sempurna sebagai Code Block.
+
+		msgText = fmt.Sprintf(`🤖 *PANDUAN PENGGUNAAN*
+
+🔍 *Cara Mencari Data*
+Cukup ketik kata kunci yang ingin dicari.
+• *Pencarian Dasar:* %s
+• *Spesifik:* %s
+• *Spesifik:* %s
+• *Wildcard:* %s
+
+🛠️ *Fitur & Tools*
+%s — Download hasil lengkap (CSV)
+%s — Masukkan kode akses VIP
+%s — Menampilkan pesan ini
+
+🔒 *Status Akses*
+Jika bot dalam mode *CLOSE*, Anda memerlukan *Key* dari Admin untuk menggunakan fitur pencarian.`,
+			code("rudi"), code("email:rudi@gmail.com"), code("ip:192.168.1.1"), code("*@yahoo.com"),
+			code("/export <keyword>"), code("/redeem <kode>"), code("/help"))
+	}
+
+	// Kirim Pesan
+	msg := tgbotapi.NewMessage(chatID, msgText)
+	msg.ParseMode = "Markdown"
+	msg.DisableWebPagePreview = true
+
+	bot.Send(msg)
 }

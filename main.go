@@ -96,6 +96,10 @@ func main() {
 				continue
 			}
 
+			if strings.HasPrefix(msg.Text, "/cleansource") {
+				handleAccessControl(bot, chatID, es, msg.Text)
+				continue
+			}
 			// Handle Mode /open /close
 			if msg.Text == "/open" {
 				globalConfig.Mode = "OPEN"         // Update RAM

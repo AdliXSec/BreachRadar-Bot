@@ -574,3 +574,41 @@ func unbanUser(es *elasticsearch.Client, userID string) {
 	}
 	req.Do(context.Background(), es)
 }
+
+func deleteBySource(es *elasticsearch.Client, filename string) int {
+	// Query: Hapus semua data yang leak_source == filename
+	query := fmt.Sprintf(`{
+		"query": {
+			"term": { "leak_source.keyword": "%s" }
+		}
+	}`, filename)
+
+	req := esapi.DeleteByQueryRequest{
+		Index:   []string{"breach_data"},
+		Body:    strings.NewReader(query),
+		Refresh: boolPtr(true), // Paksa refresh index agar data hilang seketika
+	}
+
+	res, err := req.Do(context.Background(), es)
+	if err != nil || res.IsError() {
+		return 0
+	}
+	defer res.Body.Close()
+
+	// Parse Response untuk mengambil jumlah "deleted"
+	var response map[string]interface{}
+	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+		return 0
+	}
+
+	// Ambil field "deleted" dari JSON Elasticsearch
+	if deleted, ok := response["deleted"].(float64); ok {
+		return int(deleted)
+	}
+
+	return 0
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}

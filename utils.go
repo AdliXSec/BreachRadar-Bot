@@ -17,18 +17,32 @@ func escapeMarkdown(text string) string {
 // Cek apakah field mengandung data sensitif
 func isSensitive(key string) bool {
 	k := strings.ToLower(key)
-	return strings.Contains(k, "pass") || strings.Contains(k, "hash") || strings.Contains(k, "pwd")
+	return strings.Contains(k, "pass") || strings.Contains(k, "hash") || strings.Contains(k, "pwd") || strings.Contains(k, "secret") || strings.Contains(k, "token")
 }
 
 // Sensor password
-func maskPassword(val string) string {
-	if len(val) > 3 {
-		return val[:3] + "***"
+func maskPassword(line string) string {
+	if strings.Contains(line, ": ") {
+		parts := strings.SplitN(line, ": ", 2)
+		if isSensitive(parts[0]) {
+			return parts[0] + ": ********"
+		}
+	} else if strings.Contains(line, ":") {
+		parts := strings.SplitN(line, ":", 2)
+		if isSensitive(parts[0]) {
+			return parts[0] + ": ********"
+		}
 	}
-	return "***"
+
+	if strings.Contains(line, "=") {
+		parts := strings.SplitN(line, "=", 2)
+		if isSensitive(parts[0]) {
+			return parts[0] + "=********"
+		}
+	}
+	return line
 }
 
-// Membuat ID unik untuk deduplikasi
 func generateFingerprint(data string) string {
 	hash := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(hash[:])
